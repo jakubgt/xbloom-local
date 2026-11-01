@@ -1,0 +1,17 @@
+# Replace the address with your LXC's LAN address; reserve it in DHCP.
+# Keep the hostname consistent with XBLOOM_ALLOWED_HOSTS and browser/bridge URLs.
+https://192.168.1.50 {
+    bind 192.168.1.50
+    tls internal
+
+    # Replace with the exact subnet used by your desktop and mobile devices.
+    @outside_lan not remote_ip 192.168.1.0/24 127.0.0.1 ::1
+    respond @outside_lan "LAN access only" 403
+
+    reverse_proxy 127.0.0.1:8000
+    header {
+        -Server
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+    }
+}
