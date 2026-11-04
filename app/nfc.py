@@ -20,7 +20,11 @@ CUPS = {"xpod": 0, "other": 1, "omni": 2}
 
 
 class NFCError(ValueError):
-    pass
+    """Deliberately authored public guidance, never raw underlying diagnostics."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.public_message = message
 
 
 def crc8_maxim(data: bytes) -> int:
@@ -314,7 +318,7 @@ def preview_recipe(recipe: dict, memory: bytes | None = None) -> dict[str, Any]:
         return result
     except NFCError as exc:
         # NFCError contains deliberate user-facing validation guidance.
-        message = str(exc)
+        message = exc.public_message
     except (TypeError, KeyError, OverflowError):
         # Unexpected codec failures can contain internal values or type details.
         message = "Recipe could not be encoded. Check its fields and try again."

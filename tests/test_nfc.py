@@ -129,6 +129,18 @@ class NFCCodecTests(unittest.TestCase):
         self.assertEqual(result["errors"], ["NFC dose requires whole grams; choose an integer dose explicitly."])
         self.assertEqual(result["write_blocks"], [])
 
+    def test_preview_uses_public_nfc_guidance_not_exception_diagnostics(self):
+        class DiagnosticNFCError(NFCError):
+            def __str__(self):
+                return "synthetic-internal-diagnostics"
+
+        with patch("app.nfc.decode_recipe", side_effect=DiagnosticNFCError("Read the card again.")):
+            result = preview_recipe(recipe(), self.memory)
+        self.assertFalse(result["compatible"])
+        self.assertEqual(result["errors"], ["Read the card again."])
+        self.assertEqual(result["write_blocks"], [])
+        self.assertIsNone(result["memory_hex"])
+
     def test_shorter_recipe_clears_old_payload_only(self):
         value = recipe()
         value.update(ratio=10, total_water_ml=180)

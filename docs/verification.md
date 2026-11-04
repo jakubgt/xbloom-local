@@ -6,7 +6,7 @@ This record separates automated checks, browser exercises, and limited physical-
 
 | Date | Environment | Result |
 | --- | --- | --- |
-| November 3, 2026 | Windows, Python 3.12, final error-response hardening | **299 passed**, plus 3 subtests, in 29.17 seconds. One existing Starlette/httpx deprecation warning. |
+| November 3, 2026 | Windows, Python 3.12, final error-response hardening | **300 passed**, plus 3 subtests, in 28.88 seconds. One existing Starlette/httpx deprecation warning. |
 | November 3, 2026 | Fresh hash-locked Windows environments, Python 3.12.10 and 3.13.3 | **289 passed** on each version (28.07 and 28.71 seconds). One existing Starlette/httpx deprecation warning per run. |
 | November 3, 2026 | Windows, Python 3.12 | Full suite: **289 passed** in 30.30 seconds. One existing Starlette/httpx deprecation warning. |
 | November 2, 2026 | Debian, Python 3.13.5 | Full suite: **289 passed**. |
