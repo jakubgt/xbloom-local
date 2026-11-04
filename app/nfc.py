@@ -312,7 +312,12 @@ def preview_recipe(recipe: dict, memory: bytes | None = None) -> dict[str, Any]:
             write_blocks=[{"block": i//4, "data": bytes(updated[i:i+4]).hex().upper()}
                 for i in range(32, stop, 4) if updated[i:i+4] != memory[i:i+4]])
         return result
-    except (NFCError, TypeError, KeyError, OverflowError) as exc:
-        result.update(compatible=False, recipe_hex=None, checksum=None, write_blocks=[], memory_hex=None)
-        result["errors"].append(str(exc))
-        return result
+    except NFCError as exc:
+        # NFCError contains deliberate user-facing validation guidance.
+        message = str(exc)
+    except (TypeError, KeyError, OverflowError):
+        # Unexpected codec failures can contain internal values or type details.
+        message = "Recipe could not be encoded. Check its fields and try again."
+    result.update(compatible=False, recipe_hex=None, checksum=None, write_blocks=[], memory_hex=None)
+    result["errors"].append(message)
+    return result

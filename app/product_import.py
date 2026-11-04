@@ -30,8 +30,14 @@ _DNS_SLOTS = threading.BoundedSemaphore(4)
 
 
 class ProductLookupError(ValueError):
+    """An authored public explanation, never a raw transport exception message.
+
+    Callers must supply only safe application wording (or a numeric HTTP status)
+    and retain underlying errors as exception causes, not in public_message.
+    """
     def __init__(self, message, status_code=422):
         super().__init__(message)
+        self.public_message = message
         self.status_code = status_code
 
 

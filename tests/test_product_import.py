@@ -342,3 +342,34 @@ def test_from_url_endpoint_requires_access_and_never_persists_before_approval(mo
         assert len(client.get("/api/beans").json()["items"]) == 1
         assert len(client.get("/api/recipes").json()["items"]) == 1
         assert client.get("/api/jobs").json()["items"] == []
+
+
+def test_lookup_transport_error_uses_only_public_message(monkeypatch, tmp_path):
+    monkeypatch.setenv("XBLOOM_AUTH_MODE", "trusted_lan")
+    monkeypatch.setenv("XBLOOM_ALLOWED_HOSTS", "testserver")
+
+    class FailedConnection:
+        def __init__(self, *args):
+            self.transport_socket = None
+
+        def request(self, *args, **kwargs):
+            raise OSError(13, "SYNTHETIC_INTERNAL_EXCEPTION", "/private/example.key")
+
+        def abort(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(importer, "_resolve_public", lambda host, deadline: [None])
+    monkeypatch.setattr(importer, "_PinnedHTTPSConnection", FailedConnection)
+    app = create_app(tmp_path / "data")
+    with TestClient(app) as client:
+        client.get("/api/session")
+        response = client.post("/api/import/from-url", json={"url": SOURCE})
+        assert response.status_code == 502
+        assert response.json() == {"detail": "The product page could not be securely fetched. Check the URL or try again later."}
+        assert "SYNTHETIC_INTERNAL_EXCEPTION" not in response.text
+        assert "/private/example.key" not in response.text
+        assert client.get("/api/beans").json()["items"] == []
+        assert client.get("/api/recipes").json()["items"] == []

@@ -6,6 +6,7 @@ This record separates automated checks, browser exercises, and limited physical-
 
 | Date | Environment | Result |
 | --- | --- | --- |
+| November 3, 2026 | Windows, Python 3.12, final error-response hardening | **299 passed**, plus 3 subtests, in 29.17 seconds. One existing Starlette/httpx deprecation warning. |
 | November 3, 2026 | Fresh hash-locked Windows environments, Python 3.12.10 and 3.13.3 | **289 passed** on each version (28.07 and 28.71 seconds). One existing Starlette/httpx deprecation warning per run. |
 | November 3, 2026 | Windows, Python 3.12 | Full suite: **289 passed** in 30.30 seconds. One existing Starlette/httpx deprecation warning. |
 | November 2, 2026 | Debian, Python 3.13.5 | Full suite: **289 passed**. |
@@ -17,6 +18,8 @@ Release dependency checks verified both runtime and development locks for Window
 Coverage includes authentication and trusted-LAN access, token scopes, public-HTTPS import restrictions and provenance, recipe history, saved brewing preferences, backup/restore, NFC encoding, v4/v5 dump parsing, locked and protected regions, approval expiry, mode separation, interrupted operations, recovery, and initialization contracts. Initialization checks include exact preview approval, native backup provenance, retention of originals, identity adoption only after full observable readback, and refusal to replay uncertain operations.
 
 Recorded syntax checks also cover the Windows launcher scripts, application/import Python modules, and browser JavaScript.
+
+Error-response regressions cover manual model validation without submitted-value representations, product-fetch transport errors without internal exception details, and both NFC preview endpoints. Unexpected codec failures retain no executable write payload; deliberate NFC validation keeps actionable guidance.
 
 ## Browser and simulation checks
 
