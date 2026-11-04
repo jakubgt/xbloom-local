@@ -15,6 +15,10 @@ jobs:
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # The hand-written dashboard has long template strings; scan it even when
+      # the JavaScript extractor's line-length heuristic labels it minified.
+      CODEQL_EXTRACTOR_JAVASCRIPT_ALLOW_MINIFIED_FILES: 'true'
     permissions:
       contents: read
       security-events: write
