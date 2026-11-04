@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: requirements-dev.txt
-      - run: python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
+      - run: 'python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt'
       - run: python -m pip check
       - run: python -m pytest -q
   dependencies:
@@ -42,7 +42,7 @@ jobs:
           python-version: '3.13'
           cache: pip
           cache-dependency-path: requirements-dev.txt
-      - run: python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
+      - run: 'python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt'
       - run: python scripts/lock-dependencies.py --check
       - run: python -m pip_audit --require-hashes --disable-pip --strict -r requirements.txt
       - run: python -m pip_audit --require-hashes --disable-pip --strict -r requirements-dev.txt
