@@ -1,6 +1,15 @@
 # Third-party references and notices
 
-Reviewed on 2026-11-01. This project is intended for a private GitHub repository and personal LAN deployment. No upstream application source files, artwork, personal card dumps, or Proxmark binaries are vendored in this checkout. The NFC codec and bridge were implemented using protocol information in the references below. This notice records provenance; it does not grant rights to upstream material or replace its terms.
+The reference review below was recorded on 2026-11-01 against the listed commits. This is a public source repository for an application deployed on the user's own computer or LAN. Publishing the source does not publish a running service or its data. No upstream application source files, upstream artwork, personal card dumps, or Proxmark binaries are vendored in this checkout. The NFC codec and bridge were implemented using protocol information in the references below. This notice records provenance; it does not grant rights to upstream material or replace its terms.
+
+## Repository license status
+
+No repository-wide software license is currently included. The license evidence below concerns the referenced projects; it is not a license declaration for xBloom Local. Public source availability is not described here as an open-source license grant.
+
+## Project images
+
+- `docs/images/dashboard.jpg` is an application screenshot using synthetic example records and a simulation bridge. Personal library records and card dumps are not included.
+- `assets/heimdall/xbloom-local.png` is an AI-generated project icon. Its generation and refinement prompts are recorded in `assets/heimdall/prompt.txt`; it is not an official xBloom wordmark or a copied upstream illustration.
 
 ## CrazyCoder / XBRecipeWriterPlus
 
@@ -35,4 +44,4 @@ Reviewed on 2026-11-01. This project is intended for a private GitHub repository
 
 ## Scope of this record
 
-Python runtime dependencies are installed separately and retain their own licenses and package metadata. This reference inventory is not an exhaustive dependency-license audit. Keep the provenance links with the source, and review the upstream terms and unresolved license evidence before publishing, redistributing, or incorporating upstream code or assets. Private hosting does not change upstream license terms.
+Python runtime dependencies are installed separately and retain their own licenses and package metadata. This reference inventory is not an exhaustive dependency-license audit. Keep the provenance links with the source. Unresolved license evidence is recorded above rather than treated as permission to incorporate upstream code or assets. The source repository contains no personal runtime database, private photos, credentials, or card dumps.

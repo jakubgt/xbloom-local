@@ -20,25 +20,46 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
+from .initialization import (CAPABILITY as INITIALIZATION_CAPABILITY, CHIP_PROFILE,
+    InitializationError, bind_initialization_plan, build_initialization_plan,
+    initialization_snapshot, validate_initialization_job, validate_initialization_readback)
 from .models import Bean, Card, Profile, Recipe
 from .nfc import decode_recipe, parse_dump, preview_recipe
-from .security import configure_auth, digest, load_auth, save_auth, valid_password
+from .preferences import BrewingDefaults, apply_brewing_defaults, brewing_defaults_view
+from .product_import import ProductLookupError, lookup_product
+from .security import auth_mode, configure_auth, digest, has_password, load_auth, save_auth, valid_password
 from .storage import Store, new_id, now
 
 
 def create_app(data_dir=None):
+    access_mode = auth_mode()
+    lan_only = os.environ.get("XBLOOM_LAN_ONLY", "true").lower() != "false"
+    allowed_hosts = [host.strip() for host in os.environ.get(
+        "XBLOOM_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1],testserver").split(",") if host.strip()]
+    if access_mode == "trusted_lan" and (not lan_only or not allowed_hosts or any("*" in host for host in allowed_hosts)):
+        raise ValueError("Trusted LAN access requires XBLOOM_LAN_ONLY=true and explicit XBLOOM_ALLOWED_HOSTS")
     store = Store(data_dir or os.environ.get("XBLOOM_DATA_DIR", "data"))
+    if access_mode == "trusted_lan":
+        with store.lock:
+            if load_auth(store.root) is None:
+                save_auth(store.root, {"tokens": {}})
     app = FastAPI(title="xBloom Local", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = store
     failures = {}
     secure_cookies = os.environ.get("XBLOOM_SECURE_COOKIES", "false").lower() == "true"
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=os.environ.get(
-        "XBLOOM_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1],testserver").split(","))
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+    def same_origin(request, origin):
+        try:
+            origin_url = urlsplit(origin)
+            return origin_url.netloc == request.headers.get("host") and origin_url.scheme == request.url.scheme
+        except ValueError:
+            return False
 
     @app.middleware("http")
     async def boundaries(request, call_next):
         host = request.client.host if request.client else ""
-        if os.environ.get("XBLOOM_LAN_ONLY", "true").lower() != "false" and host != "testclient":
+        if lan_only and host != "testclient":
             try:
                 addr = ipaddress.ip_address(host)
                 if not (addr.is_private or addr.is_loopback):
@@ -47,10 +68,8 @@ def create_app(data_dir=None):
                 return JSONResponse({"detail": "Unrecognized client address"}, status_code=403)
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
-            if origin:
-                origin_url = urlsplit(origin)
-                if origin_url.netloc != request.headers.get("host") or origin_url.scheme != request.url.scheme:
-                    return JSONResponse({"detail": "Cross-origin requests are not allowed"}, status_code=403)
+            if origin and not same_origin(request, origin):
+                return JSONResponse({"detail": "Cross-origin requests are not allowed"}, status_code=403)
             try:
                 if int(request.headers.get("content-length", 0)) > 12 * 1024 * 1024:
                     return JSONResponse({"detail": "Request is too large"}, status_code=413)
@@ -76,12 +95,16 @@ def create_app(data_dir=None):
             raise HTTPException(404, "Record not found")
         return value
 
+    def session_digest(token):
+        # A login-free session must never authorize password-protected access.
+        return digest(f"trusted_lan:{token}" if access_mode == "trusted_lan" else token)
+
     def cookie_valid(request):
         token = request.cookies.get("xbloom_session")
         if not token:
             return False
         with store.connect() as db:
-            row = db.execute("SELECT expires FROM sessions WHERE token_hash=?", (digest(token),)).fetchone()
+            row = db.execute("SELECT expires FROM sessions WHERE token_hash=?", (session_digest(token),)).fetchone()
         return bool(row and row[0] > time.time())
 
     def token_valid(request, kind):
@@ -92,11 +115,11 @@ def create_app(data_dir=None):
 
     def user(request: Request):
         if not cookie_valid(request) and not token_valid(request, "api"):
-            raise HTTPException(401, "Sign in to continue")
+            raise HTTPException(401, "Refresh the dashboard to continue" if access_mode == "trusted_lan" else "Sign in to continue")
 
     def session_user(request: Request):
         if not cookie_valid(request):
-            raise HTTPException(401, "This action requires dashboard sign-in")
+            raise HTTPException(401, "Refresh the dashboard before this action" if access_mode == "trusted_lan" else "This action requires dashboard sign-in")
 
     def bridge_user(request: Request):
         if not token_valid(request, "bridge"):
@@ -106,23 +129,38 @@ def create_app(data_dir=None):
         value = secrets.token_urlsafe(32)
         with store.connect() as db:
             db.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
-            db.execute("INSERT INTO sessions VALUES (?,?)", (digest(value), time.time() + 12 * 3600))
+            db.execute("INSERT INTO sessions VALUES (?,?)", (session_digest(value), time.time() + 12 * 3600))
         response.set_cookie("xbloom_session", value, httponly=True, secure=secure_cookies, samesite="strict", max_age=43200)
 
     @app.get("/api/session")
-    def get_session(request: Request):
+    def get_session(request: Request, response: Response):
         auth = load_auth(store.root)
         authenticated = cookie_valid(request)
-        return {"configured": auth is not None, "authenticated": authenticated,
-                "username": auth["username"] if authenticated and auth else None}
+        if access_mode == "trusted_lan":
+            # Bootstrap only from this dashboard, never from an embedded/foreign
+            # site. Non-browser LAN clients may omit Fetch Metadata and Origin.
+            origin = request.headers.get("origin")
+            if origin and not same_origin(request, origin):
+                raise HTTPException(403, "Cross-origin requests are not allowed")
+            if request.headers.get("sec-fetch-site", "none") not in {"same-origin", "none"}:
+                raise HTTPException(403, "Open the dashboard directly on your local network")
+            # Scoped API/bridge credentials do not become dashboard sessions.
+            if not authenticated and not request.headers.get("authorization"):
+                login_cookie(response)
+                authenticated = True
+        return {"configured": access_mode == "trusted_lan" or has_password(auth), "authenticated": authenticated,
+                "username": auth.get("username") if access_mode == "password" and authenticated and auth else None,
+                "access_mode": access_mode}
 
     @app.post("/api/setup")
     def setup(request: Request, response: Response, payload: dict = Body(...)):
+        if access_mode == "trusted_lan":
+            raise HTTPException(409, "Dashboard sign-in is disabled for trusted LAN access")
         client = request.client.host if request.client else ""
         if client not in {"127.0.0.1", "::1", "testclient"}:
             raise HTTPException(403, "Initial setup must run on localhost or with python -m app.manage setup")
         with store.lock:
-            if load_auth(store.root):
+            if has_password(load_auth(store.root)):
                 raise HTTPException(409, "Already configured")
             try:
                 config = configure_auth(store.root, str(payload.get("username", "admin")), str(payload.get("password", "")))
@@ -130,10 +168,12 @@ def create_app(data_dir=None):
                 raise HTTPException(422, str(exc))
             login_cookie(response)
         store.audit("Local account created")
-        return {"configured": True, "authenticated": True, "username": config["username"]}
+        return {"configured": True, "authenticated": True, "username": config["username"], "access_mode": access_mode}
 
     @app.post("/api/session")
     def login(request: Request, response: Response, payload: dict = Body(...)):
+        if access_mode == "trusted_lan":
+            raise HTTPException(409, "Dashboard sign-in is disabled for trusted LAN access")
         key = request.client.host if request.client else "unknown"
         recent = [t for t in failures.get(key, []) if t > time.time() - 300]
         failures[key] = recent
@@ -145,12 +185,12 @@ def create_app(data_dir=None):
             raise HTTPException(401, "Incorrect username or password")
         failures.pop(key, None)
         login_cookie(response)
-        return {"configured": True, "authenticated": True, "username": auth["username"]}
+        return {"configured": True, "authenticated": True, "username": auth["username"], "access_mode": access_mode}
 
     @app.delete("/api/session")
     def logout(request: Request, response: Response):
         with store.connect() as db:
-            db.execute("DELETE FROM sessions WHERE token_hash=?", (digest(request.cookies.get("xbloom_session", "")),))
+            db.execute("DELETE FROM sessions WHERE token_hash=?", (session_digest(request.cookies.get("xbloom_session", "")),))
         response.delete_cookie("xbloom_session")
         return {"ok": True}
 
@@ -165,12 +205,31 @@ def create_app(data_dir=None):
                 "cards_count": len(store.all("cards")), "bridge": bridge_status(),
                 "recent_activity": store.all("activity")[:20], "setup_complete": True, "version": __version__}
 
+    def saved_brewing_defaults():
+        saved = store.get("system", "brewing-defaults") or {}
+        return {"equipment_profile": saved.get("equipment_profile", "omni")}
+
+    @app.get("/api/settings/brewing-defaults", dependencies=[Depends(user)])
+    def get_brewing_defaults():
+        return brewing_defaults_view(saved_brewing_defaults())
+
+    @app.patch("/api/settings/brewing-defaults", dependencies=[Depends(session_user)])
+    def update_brewing_defaults(payload: BrewingDefaults):
+        if "equipment_profile" not in payload.model_fields_set:
+            raise HTTPException(422, "Choose an equipment profile")
+        with store.lock:
+            store.put("system", {"id": "brewing-defaults", **payload.model_dump(), "updated_at": now()})
+        store.audit("Updated the equipment defaults for future recipes")
+        return brewing_defaults_view(payload.model_dump())
+
     @app.get("/api/settings", dependencies=[Depends(user)])
     def settings():
         config = load_auth(store.root)
-        return {"username": config["username"], "version": __version__, "bridge": bridge_status(),
+        return {"username": config.get("username") if access_mode == "password" else None,
+                "access_mode": access_mode, "version": __version__, "bridge": bridge_status(),
                 "tokens_configured": list(config.get("tokens", {})), "default_dose_g": 18,
-                "storage": "Local SQLite and files", "machine_connectivity": "Offline / NFC only"}
+                "storage": "Local SQLite and files", "machine_connectivity": "Offline / NFC only",
+                "brewing_defaults": brewing_defaults_view(saved_brewing_defaults())}
 
     @app.post("/api/tokens", dependencies=[Depends(session_user)])
     def create_token(payload: dict = Body(...)):
@@ -316,6 +375,18 @@ def create_app(data_dir=None):
         warnings.append("Brewing settings are recommendations; validate them by tasting.")
         return profile, warnings
 
+    @app.post("/api/import/from-url", dependencies=[Depends(user)])
+    def import_from_url(payload: dict = Body(...)):
+        try:
+            result = lookup_product(payload.get("url"))
+            defaults = saved_brewing_defaults()
+            result["profile"]["recipe"] = apply_brewing_defaults(result["profile"]["recipe"], defaults)
+            if defaults["equipment_profile"] == "v60_01_melodrip":
+                result.setdefault("warnings", []).append("Using your V60 01 + Melodrip defaults: automatic grinding with your moving V60 adapter, then manual Melodrip placement after the bloom.")
+            return result
+        except ProductLookupError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
     @app.post("/api/import/preview", dependencies=[Depends(user)])
     def import_preview(payload: dict = Body(...)):
         profile, warnings = profile_payload(payload)
@@ -402,10 +473,79 @@ def create_app(data_dir=None):
         store.put("cards", card)
         return backup
 
+    def native_backup(backup):
+        """Read immutable source evidence and verify it against its saved record."""
+        try:
+            path = (store.root / backup["file"]).resolve()
+            path.relative_to(store.root)
+            dump = json.loads(path.read_text(encoding="utf-8"))
+            snapshot = initialization_snapshot(dump)
+            for key in ("uid", "sha256", "memory_hex", "block_count", "locks"):
+                if snapshot[key] != backup.get(key):
+                    raise ValueError("Saved backup record does not match its native file")
+            return dump, snapshot
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(422, f"Initialization needs intact native backup evidence: {exc}")
+
+    def manual_initialization_review(card, mode):
+        modes = card.get("manual_identity_reconciliation_modes")
+        return mode in modes if isinstance(modes, list) else bool(card.get("requires_manual_identity_reconciliation"))
+
+    def mark_initialization_review(card, mode, job_id):
+        card["requires_manual_identity_reconciliation"] = True
+        card["manual_identity_reconciliation_modes"] = sorted(set(card.get("manual_identity_reconciliation_modes", []) + [mode]))
+        card["initialization_review_job_id"] = job_id
+
+    def initialization_failure_evidence(card, dump, job, *, stage="failed_readback"):
+        """Retain unexpected identity only as evidence, never as a live baseline."""
+        directory = store.root / "card-backups" / card["id"]
+        directory.mkdir(parents=True, exist_ok=True)
+        evidence_id = new_id()
+        intermediate = stage == "initialization_identity_readback"
+        suffix = "initialization-identity-evidence" if intermediate else "initialization-evidence"
+        path = directory / f"{evidence_id}-{suffix}.json"
+        with path.open("x", encoding="utf-8") as output:
+            json.dump(dump, output, indent=2, allow_nan=False)
+            output.flush()
+            os.fsync(output.fileno())
+        job[f"{stage}_evidence_file"] = str(path.relative_to(store.root))
+        try:
+            parsed = parse_dump(dump)
+        except (ValueError, TypeError, KeyError) as exc:
+            job["initialization_identity_evidence_error" if intermediate else "evidence_error"] = f"Raw initialization evidence retained; parsing failed: {exc}"[:1000]
+            return
+        evidence = store.create("backups", {"card_id": card["id"], "file": str(path.relative_to(store.root)),
+            "sha256": parsed["sha256"], "uid": parsed["uid"], "block_count": parsed["block_count"],
+            "memory_hex": parsed["memory_hex"], "source": f"{'initialization-identity' if intermediate else 'failed-readback'}-{job['mode']}", "original": False,
+            "job_id": job["id"], "decoded": parsed.get("decoded"), "locks": parsed["locks"],
+            "initialization_evidence_only": True})
+        job[f"{stage}_backup_id"] = evidence["id"]
+        job["initialization_identity_observed_uid" if intermediate else "observed_uid"] = parsed["uid"]
+
     @app.get("/api/cards/{ident}/backups", dependencies=[Depends(user)])
     def backups(ident: str):
-        record("cards", ident)
-        return {"items": [b for b in store.all("backups") if b["card_id"] == ident]}
+        card = record("cards", ident)
+        items = []
+        for backup in store.all("backups"):
+            if backup["card_id"] != ident:
+                continue
+            item = {**backup, "initialization_native_json": False,
+                    "initialization_blank_candidate": False, "initialization_template_candidate": False}
+            try:
+                _, snapshot = native_backup(backup)
+                item.update(native_metadata=snapshot["metadata"], block_size=snapshot["block_size"], initialization_native_json=True)
+                supported = (card.get("type") == "custom" and backup["source"] in {"hardware", "simulation"}
+                    and snapshot["block_count"] == 64 and snapshot["block_size"] == 4
+                    and snapshot["metadata"]["ic"] == "8B" and snapshot["metadata"]["afi"] == "00"
+                    and snapshot["metadata"]["dsfid"] == "00")
+                memory = bytes.fromhex(snapshot["memory_hex"])
+                item["initialization_blank_candidate"] = supported and not any(memory)
+                item["initialization_template_candidate"] = bool(supported and any(memory[:32])
+                    and (backup.get("decoded") or {}).get("checksum_valid"))
+            except HTTPException:
+                pass
+            items.append(item)
+        return {"items": items}
 
     @app.post("/api/cards/{ident}/backups", dependencies=[Depends(user)])
     def upload_backup(ident: str, payload: dict = Body(...)):
@@ -437,6 +577,62 @@ def create_app(data_dir=None):
                 return item
         return None
 
+    def initialization_preview_for(card, payload):
+        mode = payload.get("bridge_mode")
+        if mode not in {"hardware", "simulation"} or bridge_status().get("mode") != mode:
+            raise HTTPException(409, "Review initialization in the currently selected bridge mode")
+        if card.get("type") != "custom":
+            raise HTTPException(422, "Initialization is restricted to custom inventory cards")
+        if mode == "simulation" and any(backup["card_id"] == card["id"] and backup["source"] == "hardware" for backup in store.all("backups")):
+            raise HTTPException(409, "Use separate simulation inventory; initialization cannot change a physically backed-up card's identity in simulation")
+        if mode == "hardware" and card.get("initialization_mode") == "simulation":
+            raise HTTPException(409, "Use separate physical inventory; simulated initialization cannot establish a hardware identity")
+        if manual_initialization_review(card, mode):
+            raise HTTPException(409, "This card requires manual identity reconciliation after initialization; no retry is permitted")
+        if mode in card.get("needs_fresh_read_modes", []) or (card.get("needs_fresh_read") and "needs_fresh_read_modes" not in card):
+            raise HTTPException(409, "Read this card again before reviewing initialization")
+        if payload.get("chip_profile") != CHIP_PROFILE:
+            raise HTTPException(422, "Select the explicit factory Gen2 initialization profile")
+        if type(payload.get("version")) is not int or payload["version"] < 1:
+            raise HTTPException(422, "Initialization requires an exact saved recipe version")
+        if any(key in payload for key in ("target_uid", "memory_hex", "template_dump", "write_blocks", "initialization_recipe")):
+            raise HTTPException(422, "Initialization accepts saved template and recipe references, never an arbitrary target")
+        baseline = latest_backup(card["id"], mode)
+        if baseline is None:
+            raise HTTPException(409, "Read and preserve this physical card's original backup first")
+        current_dump, current = native_backup(baseline)
+        if card.get("uid") != current["uid"]:
+            raise HTTPException(409, "The current backup identity does not match this inventory card")
+        originals = [backup for backup in store.all("backups") if backup["card_id"] == card["id"]
+                     and backup["source"] == mode and backup.get("original") is True]
+        if len(originals) != 1:
+            raise HTTPException(409, "An immutable original backup from this bridge mode must be retained")
+        _, original_snapshot = native_backup(originals[0])
+        if original_snapshot != current:
+            raise HTTPException(409, "The blank card no longer matches its saved original identity, memory, and metadata")
+        template = record("backups", payload.get("template_backup_id"))
+        template_card = record("cards", template["card_id"])
+        if template["source"] != mode or template_card["id"] == card["id"] or template_card.get("type") != "custom":
+            raise HTTPException(422, "Choose a saved same-mode template from a different custom inventory card")
+        if manual_initialization_review(template_card, mode):
+            raise HTTPException(409, "The template card requires manual identity reconciliation")
+        template_dump, _ = native_backup(template)
+        recipe = recipe_version(payload.get("recipe_id"), payload["version"])
+        context = {"card_id": card["id"], "card_label": card["label"], "baseline_backup_id": baseline["id"],
+            "original_backup_id": originals[0]["id"], "template_card_id": template_card["id"],
+            "template_label": template_card["label"], "template_backup_id": template["id"],
+            "recipe_id": recipe["id"], "recipe_version": recipe["version"], "mode": mode}
+        try:
+            return bind_initialization_plan(build_initialization_plan(current_dump, template_dump, recipe,
+                chip_profile=payload["chip_profile"]), context)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(422, str(exc))
+
+    @app.post("/api/cards/{ident}/initialize-preview", dependencies=[Depends(session_user)])
+    def initialization_preview(ident: str, payload: dict = Body(...)):
+        with store.lock:
+            return initialization_preview_for(record("cards", ident), payload)
+
     @app.post("/api/cards/{ident}/preview", dependencies=[Depends(user)])
     def card_preview(ident: str, payload: dict = Body(...)):
         record("cards", ident)
@@ -454,8 +650,8 @@ def create_app(data_dir=None):
     def create_job(payload: dict = Body(...)):
         with store.lock:
             kind = payload.get("kind")
-            if kind not in {"read", "write", "restore"}:
-                raise HTTPException(422, "Choose read, write or restore")
+            if kind not in {"read", "write", "restore", "initialize"}:
+                raise HTTPException(422, "Choose read, write, restore or explicit initialization")
             card = record("cards", payload.get("card_id"))
             bridge = bridge_status()
             if not bridge["online"]:
@@ -470,13 +666,34 @@ def create_app(data_dir=None):
             if kind != "read":
                 if payload.get("confirm") is not True or payload.get("confirm_label") != card["label"]:
                     raise HTTPException(422, "Explicitly confirm the write and type this physical card's label")
+                if manual_initialization_review(card, mode):
+                    raise HTTPException(409, "This card requires manual identity reconciliation; no further mutation is permitted")
                 if mode in card.get("needs_fresh_read_modes", []) or (card.get("needs_fresh_read") and "needs_fresh_read_modes" not in card):
                     raise HTTPException(409, "Read this card again after the interrupted or failed operation")
                 baseline = latest_backup(card["id"], mode)
                 if not baseline:
                     raise HTTPException(409, f"Read and back up this card using the {mode} bridge first")
                 memory = bytes.fromhex(baseline["memory_hex"])
-                if kind == "write":
+                if kind == "initialize":
+                    if INITIALIZATION_CAPABILITY not in bridge.get("capabilities", []):
+                        raise HTTPException(409, "Start the explicitly enabled factory initialization bridge before confirming this operation")
+                    if payload.get("confirm_initialize") is not True or payload.get("accept_special_configuration_changes") is not True:
+                        raise HTTPException(422, "Explicitly approve initialization and both special configuration writes")
+                    plan = initialization_preview_for(card, payload)
+                    context = plan["initialization_context"]
+                    if payload.get("confirm_template_label") != context["template_label"]:
+                        raise HTTPException(422, "Confirm the exact template inventory label")
+                    if payload.get("expected_preview_sha256") != plan["preview_sha256"]:
+                        raise HTTPException(409, "Initialization preview changed; review the exact original, template, and recipe again")
+                    if plan["differences"] and payload.get("accept_encoding_changes") is not True:
+                        raise HTTPException(422, "Review and explicitly accept NFC encoding differences before initialization")
+                    job.update(plan)
+                    job.update({key: context[key] for key in ("original_backup_id", "template_card_id", "template_label",
+                        "template_backup_id", "recipe_id", "recipe_version")})
+                    job.update(confirm_initialize=True, accept_special_configuration_changes=True,
+                        accept_encoding_changes=payload.get("accept_encoding_changes") is True,
+                        expected_preview_sha256=plan["preview_sha256"])
+                elif kind == "write":
                     recipe = recipe_version(payload.get("recipe_id"), payload.get("version"))
                     preview = preview_recipe(recipe, memory)
                     if not preview["compatible"]:
@@ -521,18 +738,28 @@ def create_app(data_dir=None):
     def heartbeat(payload: dict = Body(...)):
         if payload.get("mode") not in {"simulation", "hardware"}:
             raise HTTPException(422, "Unknown bridge mode")
+        capabilities = payload.get("capabilities", [])
+        if not isinstance(capabilities, list) or any(not isinstance(item, str) for item in capabilities):
+            raise HTTPException(422, "Bridge capabilities must be a list of names")
         info = {k: payload.get(k) for k in ("name", "mode", "version", "port")}
+        info["capabilities"] = [INITIALIZATION_CAPABILITY] if INITIALIZATION_CAPABILITY in capabilities else []
         store.put("system", {**info, "id": "bridge", "last_seen": now(), "last_seen_epoch": time.time()})
         return {"ok": True}
 
     @app.get("/api/bridge/jobs/next", dependencies=[Depends(bridge_user)])
-    def next_job():
+    def next_job(kind: str | None = None):
+        if kind is not None and kind not in {"read", "write", "restore", "initialize"}:
+            raise HTTPException(422, "Unknown requested job kind")
         with store.lock:
             bridge = bridge_status()
             for job in reversed(store.all("jobs")):
                 if job["status"] == "running":
                     return {"job": None}
                 if job["status"] != "queued":
+                    continue
+                if kind is not None and job["kind"] != kind:
+                    continue
+                if job["kind"] == "initialize" and INITIALIZATION_CAPABILITY not in bridge.get("capabilities", []):
                     continue
                 if job["expires_at"] < time.time() or job["mode"] != bridge["mode"]:
                     job.update(status="expired", error="Approval expired or bridge mode changed", updated_at=now())
@@ -560,6 +787,8 @@ def create_app(data_dir=None):
             card = record("cards", job["card_id"])
             card["needs_fresh_read_modes"] = sorted(set(card.get("needs_fresh_read_modes", []) + [job["mode"]]))
             card["needs_fresh_read"] = True
+            if job["kind"] == "initialize":
+                mark_initialization_review(card, job["mode"], job["id"])
             if job["mode"] == "hardware":
                 card.update(verified_at=None, verification="unverified")
             store.put("cards", card)
@@ -572,7 +801,18 @@ def create_app(data_dir=None):
             job = record("jobs", ident)
             if job["status"] != "running":
                 raise HTTPException(409, "Job is not running")
+            if payload.get("mode", job["mode"]) != job["mode"]:
+                raise HTTPException(409, "Backup mode does not match the approved job")
+            if job["mode"] == "hardware" and payload.get("simulated") is True:
+                raise HTTPException(409, "A simulated backup cannot establish physical card evidence")
             parsed = parse_or_error(payload.get("dump"))
+            if job["kind"] == "initialize":
+                if payload.get("mode") != job["mode"]:
+                    raise HTTPException(409, "Initialization backup mode does not match its approval")
+                try:
+                    validate_initialization_job(job, payload.get("dump"))
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise HTTPException(409, str(exc))
             if job.get("expected_memory_sha256") and parsed["sha256"] != job["expected_memory_sha256"]:
                 raise HTTPException(409, "Card contents changed since approval; read again and create a new approval")
             backup = save_backup(record("cards", job["card_id"]), payload["dump"], job["mode"], ident)
@@ -597,32 +837,66 @@ def create_app(data_dir=None):
             error = str(payload.get("error") or "")[:2000]
             if payload.get("mode") != job["mode"]:
                 success, error = False, "Bridge result mode does not match approved job"
+            if job["mode"] == "hardware" and payload.get("simulated") is True:
+                success, error = False, "A simulated result cannot verify a physical card"
+            if job["kind"] == "initialize" and payload.get("initialization_identity_readback_dump") is not None:
+                try:
+                    initialization_failure_evidence(record("cards", job["card_id"]),
+                        payload["initialization_identity_readback_dump"], job, stage="initialization_identity_readback")
+                except (ValueError, TypeError, KeyError, HTTPException, OSError) as exc:
+                    job["initialization_identity_evidence_error"] = str(getattr(exc, "detail", exc))[:1000]
             parsed = None
             if success:
                 dump = payload.get("readback_dump") or payload.get("backup_dump")
                 try:
                     parsed = parse_dump(dump)
-                    if job.get("uid") and parsed["uid"] != job["uid"]:
+                    if job["kind"] == "initialize":
+                        validate_initialization_readback(job, dump)
+                    elif job.get("uid") and parsed["uid"] != job["uid"]:
                         raise ValueError("Readback UID does not match approved card")
                     if job["kind"] != "read":
                         if not job.get("prewrite_backup_id"):
                             raise ValueError("Original contents were not backed up before the write")
                         if bytes.fromhex(parsed["memory_hex"]) != bytes.fromhex(job["memory_hex"]):
                             raise ValueError("Readback does not match the approved card image")
-                    save_backup(record("cards", job["card_id"]), dump, job["mode"], ident)
-                except (ValueError, TypeError, KeyError, HTTPException) as exc:
+                    saved_card = record("cards", job["card_id"])
+                    if job["kind"] == "initialize":
+                        if saved_card.get("uid") != job["original_uid"]:
+                            raise ValueError("Inventory identity changed before initialization verification")
+                        # This narrowly scoped adoption follows full UID/memory/
+                        # lock/metadata verification. save_backup's ordinary UID
+                        # matching rule remains unchanged for all other paths.
+                        saved_card = {**saved_card, "uid": job["target_uid"], "original_uid": job["original_uid"],
+                            "initialization_job_id": ident, "template_backup_id": job["template_backup_id"],
+                            "initialization_mode": job["mode"],
+                            "hidden_configuration_verified": False, "offline_acceptance": "not_tested"}
+                    save_backup(saved_card, dump, job["mode"], ident)
+                    if job["kind"] == "initialize":
+                        store.audit(f"Verified observable initialization identity for {saved_card['label']}: {job['original_uid']} → {job['target_uid']}; special configuration is not readback-verified")
+                except (ValueError, TypeError, KeyError, HTTPException, OSError) as exc:
                     success, error = False, f"Verification failed: {getattr(exc, 'detail', str(exc))}"
             if not success and payload.get("readback_dump"):
                 try:
-                    evidence = save_backup(record("cards", job["card_id"]), payload["readback_dump"], f"failed-readback-{job['mode']}", ident)
-                    job["failed_readback_backup_id"] = evidence["id"]
-                except (ValueError, TypeError, KeyError, HTTPException) as exc:
+                    evidence_card = record("cards", job["card_id"])
+                    if job["kind"] == "initialize" or manual_initialization_review(evidence_card, job["mode"]):
+                        initialization_failure_evidence(evidence_card, payload["readback_dump"], job)
+                    else:
+                        evidence = save_backup(evidence_card, payload["readback_dump"], f"failed-readback-{job['mode']}", ident)
+                        job["failed_readback_backup_id"] = evidence["id"]
+                except (ValueError, TypeError, KeyError, HTTPException, OSError) as exc:
                     job["evidence_error"] = str(getattr(exc, "detail", exc))[:1000]
+            if job["kind"] == "initialize":
+                job.update(initialization_attempted=payload.get("initialization_attempted") is True,
+                    manual_reconciliation_required=not success, ordinary_memory_verified=success,
+                    initialized=success, hidden_configuration_preservation_verified=False,
+                    machine_acceptance_verified=False)
             job.update(status="succeeded" if success else "failed", error=error or None,
                 completed_at=now(), updated_at=now(), hardware_verified=success and job["mode"] == "hardware",
                 simulated=job["mode"] == "simulation", result_digest=result_digest)
             store.put("jobs", job)
             card = record("cards", job["card_id"])
+            if job["kind"] == "initialize" and not success:
+                mark_initialization_review(card, job["mode"], job["id"])
             if job["kind"] != "read":
                 if success and job["mode"] == "hardware":
                     card.update(recipe_id=job.get("recipe_id"), recipe_version=job.get("recipe_version"), verified_at=now(), verification="verified", verified_memory_sha256=parsed["sha256"])
@@ -636,7 +910,8 @@ def create_app(data_dir=None):
                         card["needs_fresh_read"] = True
                 store.put("cards", card)
             elif success:
-                card["needs_fresh_read_modes"] = [mode for mode in card.get("needs_fresh_read_modes", []) if mode != job["mode"]]
+                card["needs_fresh_read_modes"] = [mode for mode in card.get("needs_fresh_read_modes", [])
+                    if mode != job["mode"] or manual_initialization_review(card, job["mode"])]
                 card["needs_fresh_read"] = bool(card["needs_fresh_read_modes"])
                 if job["mode"] == "hardware" and card.get("verified_memory_sha256") != parsed["sha256"]:
                     card.update(verified_at=None, verification="unverified", recipe_id=None, recipe_version=None)

@@ -93,7 +93,7 @@ def _hex_byte(value: Any, name: str) -> int:
 
 
 def parse_dump(data: dict | bytes | str) -> dict[str, Any]:
-    """Parse known Proxmark v4 JSON or the user's 2235-byte packed binary format.
+    """Parse Proxmark v4/v5 JSON or the known 2235-byte v4 binary format.
 
     The .bin wrapper is NOT raw tag memory. Unknown binary formats are rejected.
     All blocks and lock bytes must be present; truncated reads cannot be backups.
@@ -110,24 +110,35 @@ def parse_dump(data: dict | bytes | str) -> dict[str, Any]:
             except (ValueError, UnicodeError) as exc:
                 raise NFCError("Invalid dump JSON.") from exc
         if len(data) != 2235:
-            raise NFCError("Unsupported binary dump. Use Proxmark 15693 v4 JSON or its 2235-byte binary.")
+            raise NFCError("Unsupported binary dump. Use Proxmark 15693 v4/v5 JSON or the legacy 2235-byte binary.")
         block_size, count = data[12], data[13]
         uid = normalize_uid(data[:8].hex(), little_endian=True)
         locks = list(data[15:15 + count])
         memory = data[175:175 + count * block_size]
         format_name = "proxmark3-bin-v4"
     elif isinstance(data, dict):
-        if data.get("FileType") != "15693 v4":
-            raise NFCError("Only Proxmark FileType '15693 v4' dumps are supported.")
+        file_type = data.get("FileType")
+        if file_type not in ("15693 v4", "15693 v5"):
+            raise NFCError("Only Proxmark FileType '15693 v4' or '15693 v5' dumps are supported.")
+        is_v5 = file_type == "15693 v5"
         card = data.get("Card")
         blocks = data.get("blocks")
         if not isinstance(card, dict) or not isinstance(blocks, dict):
             raise NFCError("Dump must contain Card metadata and numbered blocks.")
         uid = normalize_uid(card.get("uid", ""), little_endian=True)
         block_size = _hex_byte(card.get("bytesperpage"), "bytesperpage")
-        count = _hex_byte(card.get("pagescount"), "pagescount")
+        if is_v5:
+            # v5 changes only pagescount to two bytes in little-endian order.
+            page_count = card.get("pagescount")
+            if not isinstance(page_count, str) or not re.fullmatch(r"[0-9a-fA-F]{4}", page_count):
+                raise NFCError("Invalid v5 pagescount; expected exactly two little-endian hex bytes.")
+            count = int.from_bytes(bytes.fromhex(page_count), "little")
+        else:
+            count = _hex_byte(card.get("pagescount"), "pagescount")
         if block_size != 4 or not 13 <= count <= 160:
             raise NFCError("Expected 13–160 four-byte blocks.")
+        if is_v5 and set(blocks) != {str(i) for i in range(count)}:
+            raise NFCError("v5 blocks must exactly match the declared page count.")
         try:
             values = [blocks[str(i)] for i in range(count)]
             if any(not isinstance(v, str) or not re.fullmatch(r"[0-9A-Fa-f]{8}", v) for v in values):
@@ -136,10 +147,12 @@ def parse_dump(data: dict | bytes | str) -> dict[str, Any]:
             lock_hex = card.get("locks", "")
             if not isinstance(lock_hex, str) or len(lock_hex) != count * 2:
                 raise NFCError("Dump must include lock status for every block.")
+            if is_v5 and not re.fullmatch(r"[0-9a-fA-F]+", lock_hex):
+                raise NFCError("v5 lock status must contain one hex byte per block.")
             locks = list(bytes.fromhex(lock_hex))
         except (KeyError, ValueError) as exc:
             raise NFCError("Dump is incomplete or contains invalid hexadecimal data.") from exc
-        format_name = "proxmark3-json-v4"
+        format_name = "proxmark3-json-v5" if is_v5 else "proxmark3-json-v4"
     else:
         raise NFCError("Expected a Proxmark JSON object or binary dump.")
     if block_size != 4 or not 13 <= count <= 160 or len(memory) != count * 4:

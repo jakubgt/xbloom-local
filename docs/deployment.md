@@ -4,7 +4,7 @@
 
 The Debian LXC runs FastAPI and SQLite. Caddy terminates LAN HTTPS and forwards to Uvicorn bound to `127.0.0.1:8000`. The Windows bridge makes authenticated outbound requests to the LXC; it does not open a Proxmark control port. Desktop and mobile browsers access the same dashboard. The Windows PC and connected Proxmark must be available to perform physical card operations.
 
-The app does not fetch coffee URLs automatically. Codex reads the product page, proposes a structured profile, and imports it after review. It does not send recipes to the machine over Bluetooth. Brewing uses the written card with the xBloom offline.
+The app can fetch a public coffee product page when you choose Fetch bean details in Import profile. It extracts available source facts and presents them for review with a separate starting recipe. Codex can also prepare a tailored JSON profile. The server needs outbound HTTPS for this explicit lookup; the xBloom machine remains offline. Nothing is sent to the machine over Bluetooth, and fetching a page does not save a profile or authorize a card write.
 
 ## Prepare the LXC
 
@@ -19,7 +19,7 @@ useradd --system --home-dir /var/lib/xbloom-local --shell /usr/sbin/nologin xblo
 install -d -o xbloom -g xbloom -m 0700 /var/lib/xbloom-local
 ```
 
-Clone the private repository to `/opt/xbloom-local` using your GitHub authentication, or copy the reviewed source checkout there. Keep `data/`, `.venv/`, credentials, and local card dumps out of that source transfer.
+Clone the source repository to `/opt/xbloom-local`, or copy a reviewed source checkout there. Keep `data/`, `.venv/`, credentials, and local card dumps out of that source transfer. Public source availability does not expose your running application; keep the deployment restricted to your LAN.
 
 ```sh
 git clone https://github.com/jakubgt/xbloom-local.git /opt/xbloom-local
@@ -31,11 +31,24 @@ install -m 0600 deploy/xbloom-local.env.example /etc/xbloom-local.env
 
 Edit `/etc/xbloom-local.env`: set `XBLOOM_ALLOWED_HOSTS` to the LXC's actual reserved IP and any LAN hostname you will use. Keep `XBLOOM_SECURE_COOKIES=true` and `XBLOOM_LAN_ONLY=true`. Runtime configuration is read from process environment; the server does not automatically load a project `.env` file.
 
-Initialize the user account before exposing the service:
+Choose the dashboard access mode in that file:
+
+- `XBLOOM_AUTH_MODE=trusted_lan` opens the dashboard directly, without a username, password, or sign-in screen. Skip account setup. Anyone permitted by your LAN firewall and Caddy rules can use the dashboard, edit the library, download backups, and create bridge/import tokens.
+- `XBLOOM_AUTH_MODE=password` is the default. Initialize the local account before exposing the service, using the command below.
+
+Both modes retain allowed-host, LAN-only, and same-origin checks. Trusted-LAN mode automatically establishes a strict browser session; it does not remove the scoped tokens required by the Windows bridge and import API. Physical card backup and approval requirements are unchanged. Keep HTTPS and restrict the permitted LAN devices/subnet through Caddy and the firewall in either mode.
+
+For **password mode only**:
 
 ```sh
 cd /opt/xbloom-local
 runuser -u xbloom -- env XBLOOM_DATA_DIR=/var/lib/xbloom-local /opt/xbloom-local/.venv/bin/python -m app.manage setup
+```
+
+Then install and start the service in either mode:
+
+```sh
+cd /opt/xbloom-local
 install -m 0644 deploy/xbloom.service /etc/systemd/system/xbloom.service
 systemctl daemon-reload
 systemctl enable --now xbloom
@@ -61,6 +74,16 @@ Uvicorn trusts forwarded headers only from its local proxy, matching FastAPI's [
 
 ## Windows bridge
 
+Settings stores a usual brewing setup for future recipes: Omni, or Hario V60 01
+Clear with Melodrip. The selected defaults are used for new recipes and the
+starting recommendation on a first product-link import. They do not rewrite
+saved recipe versions, an existing import draft, or a supplied JSON recipe.
+The V60 setup assumes the user's moving adapter carries the dripper beneath the
+grinder and water outlet. The recipe card uses Other dripper with automatic
+grinding enabled at the recipe's grind setting and RPM. Placing the
+Melodrip after the bloom is a manual step recorded in recipe notes, not an NFC
+instruction or an automatically controlled accessory.
+
 Use the same checkout and Python environment on Windows. In Settings, issue a **bridge token**, save it in a password manager, and provide it only to the bridge. The dashboard shows it once; issuing a replacement revokes the previous bridge token. An API token is separate and is intended for approved profile imports.
 
 Start with simulation:
@@ -79,7 +102,10 @@ $env:XBLOOM_CA_FILE = 'C:\certificates\xbloom-root.crt'
 
 Use HTTPS for LAN access. Plain HTTP is suitable only for a loopback preview on the same computer.
 
-Read-only physical access uses your existing Iceman client. The historical setup used COM6; check the current port in Device Manager if connection fails. Supply the actual executable, not a `.bat` launcher:
+Read-only physical access uses an Iceman client compatible with the connected
+reader's firmware. Detect the current COM port before starting; historical ports
+and client versions are not defaults for a new reader. Supply the actual
+executable, not a `.bat` launcher. Replace the example path and COM port below:
 
 ```powershell
 .\scripts\start-bridge.ps1 -ServerUrl 'https://192.168.1.50' -Hardware -ProxmarkExecutable 'C:\proxmark3\client\proxmark3.exe' -Port COM6
@@ -87,13 +113,70 @@ Read-only physical access uses your existing Iceman client. The historical setup
 
 Close any other Proxmark client using that serial port. Queue a read for the selected physical card. Match its physical label yourself because custom cards can share a UID.
 
-When you are ready to approve individual physical writes, start a foreground session with `-Hardware -AllowWrites`. Each operation also needs dashboard approval and a local typed confirmation (`WRITE <card label>` or `RESTORE <card label>`). Keep one card on the reader. The bridge saves the current full-memory backup and obtains server acknowledgment before writing; it preserves the authentication/header and custom-card configuration regions, changes only the supported recipe region, then verifies by reading back. See [NFC details](nfc-format.md) for exact limits.
+For a Proxmark5, use the computer USB-C port beside the orange/yellow button,
+connecting normally without holding the button. The other USB-C port is for
+expansion. See the [upstream Proxmark5 guide](https://github.com/RfidResearchGroup/proxmark3/blob/754bbae3d946429a6354cd34a97a2dd29ce6f157/doc/md/PM5_Start_Here/Getting_Started_With_PM5.md).
+Check the client with `--version` and the connected reader with `hw version`
+before attempting a card read. The historical Proxmark3 client is not assumed
+compatible with a new Proxmark5. A version mismatch calls for investigation;
+setup does not authorize a firmware update. Newer v5 JSON dumps are supported,
+but hardware acceptance remains a separate read-only test.
+
+When you are ready to approve individual ordinary recipe writes, start a foreground session with `-Hardware -AllowWrites`. Each operation also needs dashboard approval and a local typed confirmation (`WRITE <card label>` or `RESTORE <card label>`). Keep one card on the reader. The bridge saves the current full-memory backup and obtains server acknowledgment before writing; ordinary writes/restores preserve the authentication/header and custom-card configuration regions, change only the supported recipe region, then verify by reading back. Blank-card initialization is a separate opt-in described below. See [NFC details](nfc-format.md) for exact limits.
 
 Bridge data is stored under `data/bridge` by default. Use `XBLOOM_BRIDGE_DATA_DIR` for an alternative private persistent directory. Keep the bridge foreground for interactive write confirmation. A background service would not supply that confirmation and should not be used to bypass it.
 
 For a failed or interrupted write, treat the card as unverified. Do not automatically retry or brew with it based on a success status from an earlier job. Read it again, review the result, and explicitly approve a recipe restore if necessary.
 
 If a job remains running after an interruption, stop the bridge process and wait for the dashboard to show it offline. Use **Resolve interruption** in Card activity, confirm the bridge is stopped, and enter the physical card label. This marks the job failed and requires a fresh read. Restart the bridge and use **Read & back up** before preparing another write. Resolving a job never repairs or retries a card write by itself.
+
+### Separately approved blank-card initialization
+
+Use **Review blank-card initialization** only for a saved native read of a
+supported, entirely blank 64-block custom card. It appears separately from
+**Prepare recipe**. Keep the card's original backup and physical label; select a
+valid same-mode backup from a different working custom card as the identity
+template, then select the exact saved recipe version. Imported dumps are not
+initialization templates.
+
+The review explicitly shows the target label and original UID, template label
+and new UID, header/recipe block changes, and two hidden chip-setting changes:
+selector `47=3F038B00` and selector `52=00000000`. The original 64-block memory
+backup **does not include those hidden settings and cannot recover them**.
+Ordinary readback cannot verify them. Visible memory at bytes 160–255 and
+readable lock/AFI/DSFID/IC metadata must remain unchanged. This exception is
+limited to the reviewed factory Gen2 initialization; ordinary writes and
+restores still preserve all protected data.
+
+Preparation does not authorize execution. A physical initialization additionally
+needs an initialization-enabled foreground bridge, both typed card labels in
+the dashboard, a separate acceptance of the hidden-setting changes, and the
+local phrase `INITIALIZE <card label>`. Only the target blank card belongs on
+the reader; keep the template card off it. The dashboard cannot queue this job
+unless the connected bridge advertises `init_factory_gen2_v1`.
+
+The Python bridge exposes `--allow-initialization` separately from
+`--allow-writes`. After configuring the existing `XBLOOM_SERVER_URL`,
+`XBLOOM_BRIDGE_TOKEN`, `XBLOOM_CA_FILE`, `PM3_EXECUTABLE`, `PM3_PORT`, and private
+bridge-data directory for the current desktop, run from the project directory
+in an interactive PowerShell window:
+
+```powershell
+.\.venv\Scripts\python.exe -m bridge.main --hardware --allow-writes --allow-initialization --once --wait-for-job 120
+```
+
+Do not assume a previous computer's port, client, or environment. The regular
+PowerShell launcher does not supply the initialization flag. The Python opt-ins
+do not bypass per-operation dashboard approval or the local prompt.
+
+A failed, timed-out, or interrupted initialization requires **manual identity
+reconciliation**. Stop the bridge and retain all evidence. A fresh read does
+not clear this restriction, and **Resolve interruption** does not authorize a
+retry or restore. There is no automatic rollback; a recipe restore cannot undo
+the UID/header/hidden-setting changes. A successful full readback establishes
+the expected readable data only. Check the displayed settings and perform the
+supervised offline xBloom acceptance test before relying on the new card;
+Bluetooth remains unused.
 
 ## First physical-card acceptance checklist
 
@@ -106,7 +189,7 @@ This checklist is an acceptance test to perform later with your hardware. It is 
 5. **Verify the result.** Require a successful hardware job with matching readback. Confirm the card is marked **Read-back verified** and the expected recipe/version is assigned. Keep the original and pre-write backups. A simulation success or merely queued job is not a verified physical write.
 6. **Test the offline machine.** With the xBloom disconnected from the internet and Bluetooth unused, tap the card, inspect the displayed settings, and run the supervised test brew. Record whether the machine accepted the card and followed the intended dose and pours. Readback proves stored bytes; this final test establishes actual machine behavior.
 
-If any step fails, stop at that step. Preserve the job record and readback, perform a fresh read, and review a separately approved recipe restore when needed. The first release restores the recipe region while preserving identity/configuration; it does not rewrite a custom card's UID or authentication header.
+If any ordinary recipe-write step fails, stop at that step. Preserve the job record and readback, perform a fresh read, and review a separately approved recipe restore when needed. Recipe restoration preserves identity/configuration and cannot undo initialization. A failed initialization follows the manual identity reconciliation procedure above.
 
 ## Backups
 
@@ -131,7 +214,7 @@ runuser -u xbloom -- env XBLOOM_DATA_DIR=/var/lib/xbloom-local /opt/xbloom-local
 systemctl start xbloom
 ```
 
-The restore command validates archive paths and checksums and refuses a nonempty destination. The `xbloom` service user needs read access to the ZIP; keep the ZIP outside the directory being moved. Do not continue to `systemctl start` if restore reports an error. Verify login, bean/recipe history, photos, and a known card backup before restarting the bridge. Sessions and pending/running card jobs are cleared or cancelled during restoration so old approvals cannot trigger new work. Restoring application data does not modify any physical card. Physical recipe restoration is a separate approved and verified bridge job.
+The restore command validates archive paths and checksums and refuses a nonempty destination. The `xbloom` service user needs read access to the ZIP; keep the ZIP outside the directory being moved. Do not continue to `systemctl start` if restore reports an error. Verify dashboard access in your configured mode, bean/recipe history, photos, and a known card backup before restarting the bridge. Sessions and pending/running card jobs are cleared or cancelled during restoration so old approvals cannot trigger new work. Restoring application data does not modify any physical card. Physical recipe restoration is a separate approved and verified bridge job.
 
 ## Updating
 

@@ -1,15 +1,51 @@
 # Verification record
 
-Validated on November 1, 2026 using Python 3.12 on Windows.
+This record separates automated checks, browser exercises, and limited physical-card acceptance. Passing software tests or matching card bytes does not establish correct behavior on every reader, card, firmware, or brewer.
 
-- 45 automated tests pass for authentication, token scopes, profile review, version history, full backup/restore, NFC encoding, immutable headers, simulated and physical mode separation, job expiration, interrupted operations, corruption recovery, and bridge replay prevention.
-- The supplied Proxmark JSON and packed binary dumps were inspected read-only. Their decoded memory bytes match and the stored recipe CRC verifies. Neither supplied dump is in this repository.
-- Browser checks passed at 390 px mobile and 1440 px desktop widths: navigation, sign-in, example-profile review/import, recipe editing, version creation, compatibility preview, card registration, simulated read/backup, and simulated write/readback. Browser console reported no errors during these checks.
-- A live local HTTP simulation bridge completed the dashboard's read and write workflows. It did not open a USB device. Simulation results did not mark physical cards verified.
-- The Windows launcher scripts passed PowerShell parsing; the import helper and application modules passed Python syntax checks. JavaScript syntax checks passed.
+## Automated checks
+
+| Date | Environment | Result |
+| --- | --- | --- |
+| November 3, 2026 | Windows, Python 3.12 | Full suite: **289 passed** in 30.30 seconds. One existing Starlette/httpx deprecation warning. |
+| November 2, 2026 | Debian, Python 3.13.5 | Full suite: **289 passed**. |
+
+The latest Windows run used a fresh temporary test directory. Tests use temporary application storage, synthetic card data, and mocked device calls; they do not open a reader or perform physical card operations.
+
+Coverage includes authentication and trusted-LAN access, token scopes, public-HTTPS import restrictions and provenance, recipe history, saved brewing preferences, backup/restore, NFC encoding, v4/v5 dump parsing, locked and protected regions, approval expiry, mode separation, interrupted operations, recovery, and initialization contracts. Initialization checks include exact preview approval, native backup provenance, retention of originals, identity adoption only after full observable readback, and refusal to replay uncertain operations.
+
+Recorded syntax checks also cover the Windows launcher scripts, application/import Python modules, and browser JavaScript.
+
+## Browser and simulation checks
+
+Recorded desktop (**1440 px**) and mobile (**390 px**) browser exercises used disposable synthetic libraries. They covered navigation and access, profile review/import, recipe editing and version creation, compatibility previews, card registration, and simulated read/backup/write/readback. No browser page errors were reported during those exercises.
+
+Product-link checks covered explicit fetching, editable facts, unknown fields, preserving an existing recipe and agitation settings, clearing unrelated facts when switching products, source notes for edits, escaped page text, preview without persistence, and an explicitly approved save. A public product page was also fetched in a read-only integration check; extraction support is not guaranteed for every roaster.
+
+Initialization browser checks exercised the separate review, disabled approval on a read-only bridge, and an intercepted confirmation request. No physical job was submitted by those browser checks. A local HTTP simulation bridge separately completed the dashboard's read and write workflow without opening USB hardware or marking physical cards verified.
+
+Saved equipment preferences were checked for persistence across restarts and application to new recipes and first product-link recommendations. Existing versions and explicit JSON recipes retain their settings. The V60/Melodrip default enables automatic grinding with a suitable moving adapter; diffuser placement after the direct bloom remains manual.
+
+## Limited physical-card acceptance
+
+Physical checks were performed with a **Proxmark5** and a client built from the factory-reported upstream base, **`6df95a2dc`**. The normal capability size/version checks passed for this combination. A mismatched newer client was refused. Factory firmware contains additional modifications, so these results establish the tested operations only, not an exact firmware match or general Proxmark5 qualification.
+
+The recorded acceptance includes:
+
+- **Read and backup:** complete native v4 reads matched UID, all 64 four-byte memory blocks, and lock status, with a valid recipe checksum. A dashboard/Windows-bridge read retained an original hardware backup.
+- **Ordinary recipe writes:** explicitly approved writes completed through the normal backup, dashboard approval, and interactive bridge workflow. Full 256-byte readback matched the approved target. Independent checks confirmed the recipe/checksum and preserved UID, header, tail memory, locks, and readable metadata. A later recipe-only grinder update was also readback verified without running initialization commands.
+- **Explicit factory Gen2 initialization:** one approved blank-card initialization completed with the separate identity/header and hidden-setting approvals. Intermediate identity readback and final full-memory readback matched the observable plan. Bytes 160–255, readable block locks, and IC/AFI/DSFID metadata remained unchanged; the original target backup was retained and the template card was not modified.
+- **Backup integrity:** retained application exports passed manifest checksums and SQLite integrity validation.
+
+These results apply only to the tested cards, client/firmware combination, and operations. Actual v5 physical reads remain untested; v5 format coverage is synthetic. Personal dumps and application backups are not included in the repository or test fixtures.
+
+## Preservation and initialization limits
+
+**Ordinary recipe writes and restores** preserve UID, the opaque authentication/header, and configuration outside the recipe region. Recipe restoration is limited to blocks 8–39; it is not a full-card restore.
+
+**Separately enabled factory Gen2 initialization** is the explicit exception: it adopts a template UID/header and changes two hidden chip settings. Ordinary memory backups cannot capture or recover those settings, and ordinary readback cannot verify their final values. A successful initialization result establishes only the expected observable UID, memory, readable locks, and metadata. A failed, interrupted, or uncertain attempt requires manual identity reconciliation; there is no automatic retry or rollback, and a recipe restore cannot undo initialization.
 
 ## Remaining acceptance work
 
-The Debian deployment configuration has not been run in the user's LXC; that container will be supplied later. The Proxmark adapter's command construction and validation are tested against synthetic outputs and inspected upstream source, but have not been exercised against the user's physical reader. No card was written and no offline brew was performed. Follow the physical acceptance checklist in [deployment.md](deployment.md#first-physical-card-acceptance-checklist) when the user is ready to explicitly approve a card write.
+**Offline brewer recognition and a supervised brew have not been verified.** Card readback does not establish how xBloom firmware interprets every field or whether a complete V60/adapter/Melodrip setup behaves as intended. The software does not validate taste or automate manual accessory placement.
 
-Restoration is scoped to the saved recipe region (blocks 8–39). UID, signature/header, chip configuration, and locked blocks are never rewritten by this application. Tea recipes and changes to card identity are outside this release.
+Follow the [physical-card acceptance checklist](deployment.md#first-physical-card-acceptance-checklist) for each new hardware setup and review the [initialization limits](deployment.md#separately-approved-blank-card-initialization) before enabling that separate workflow. Every future physical operation still requires its own current backup and explicit approval.

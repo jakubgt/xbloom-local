@@ -1,0 +1,14 @@
+Generated with the built-in image_gen tool.
+Final deliverable: xbloom-local.png (opaque square PNG for Heimdall).
+
+Initial prompt:
+Use case: logo-brand.
+Asset type: a finished square application icon for a Heimdall dashboard tile, for xBloom Local Recipe Manager, a private coffee recipe and NFC-card management app.
+Primary request: Create one beautiful, original, instantly recognizable coffee app icon, not a sheet of alternatives or a mockup. The app uses warm cream and deep forest green.
+Subject and composition: a bold warm-ivory coffee cup with a gently tapering body and one clean handle, with a tiny flat coffee-bean-shaped mark centered on the cup. Above the cup, one substantial curved steam stroke softly suggests a leaf/bloom. Integrate two small but sturdy curved NFC signal arcs beside the upper right of the cup, visually subordinate. All elements form one balanced compact symbol, centered on a deep forest green rounded-square tile. Generous quiet margins. Strong silhouette readable at 48 to 64 pixels. Rounded square occupies about 88 percent of a square canvas; corners smoothly rounded.
+Style/medium: refined flat vector-like app-icon illustration, immaculate edges and smooth solid fills, restrained and premium, no outlines thinner than the main shape needs. Palette deep forest green #244C3B, warm ivory #F6EEDC, tiny muted sage #A9C1A8 accent if useful. Flat front view, not a tilted object.
+Background: genuinely transparent outside the rounded green tile. The green tile itself is opaque. No visible checkerboard. Prefer 1024x1024 square PNG.
+Constraints: no text, no letters, no typography, no watermark, no gradients, no photographic scene, no hands, no device mockup, no extra border, no surrounding background, no drop shadow outside the tile. Do not reproduce an official xBloom wordmark.
+
+Final refinement prompt:
+Use case: precise-object-edit. Edit the attached coffee application icon into a clean final Heimdall icon. Keep the same warm ivory cup, coffee bean motif, leaf-shaped steam and sage signal arcs, the same balanced placement and bold silhouette. Change the entire background: make it a perfectly uniform, completely opaque, solid deep forest green #244C3B covering the WHOLE square canvas, edge to edge, corner to corner. Remove the rounded tile boundary: the entire square itself is the green tile. There must be zero transparency, zero cutout areas, zero holes, no black patches, no mottling, no glow, no shading, no gradients, no shadows. Flatten all foreground fills too: ivory #F6EEDC and sage #A9C1A8 only, with smooth antialiased edges. Preserve clear margins around the cup and steam. This should look like a precise flat vector app icon at a small size. No text, no watermark. Output one square PNG with opaque background.

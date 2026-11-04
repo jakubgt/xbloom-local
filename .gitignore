@@ -36,3 +36,14 @@ node_modules/
 Thumbs.db
 .local/
 tmp/
+
+# Private transfer notes, local credentials, and machine certificates.
+/CODEX_HANDOFF.md
+/CONTINUE_PROMPT.txt
+/TRANSFER_README.txt
+.ssh/
+*.dpapi
+*.p12
+*.p8
+*.crt
+*.cer

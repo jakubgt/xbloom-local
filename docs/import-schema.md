@@ -6,6 +6,18 @@ Product-page facts belong in `bean`; brewing proposals belong in `recipe`. Missi
 
 Set `recipe.recommendation` to `true` for an AI-generated starting recipe. Explain the reasoning and uncertainty in `recipe.notes`. Set it to `false` for a manually established recipe. The profile remains editable after import; tasting changes can be saved as new recipe versions.
 
+## Import from a product link
+
+In **Import profile**, paste the public product-page link and choose **Fetch bean details**. Available names, origin details, processing, variety, elevation, and roaster tasting notes are filled for review. Missing roast level, roast date, and other unsupported facts stay unknown. You can correct the bean fields in the form; manual changes are identified in their source notes.
+
+Lookup reads structured product metadata and clearly labeled fields from the page. Extraction varies between roasters; inspect the result against the linked source. Pages requiring sign-in or JavaScript-only product details may need a JSON profile or manual entry. Page text is data, never executable instructions. Photos are still uploaded separately.
+
+A newly fetched profile includes a fixed 18 g starting recommendation. It is not a roaster-provided recipe or a claim of brew validation. If a draft already has a recipe, fetching bean details preserves that recipe. Switching to another product does not carry over unknown origin facts from the previous coffee.
+
+The JSON file/paste workflow remains available. Both entry paths use the same preview and explicit approval before creating library records. No card operation is performed by lookup or import.
+
+`POST /api/import/from-url` accepts `{"url": "https://roaster.example/products/coffee"}` and returns `profile`, `warnings`, and `source_url`. It uses the same dashboard/API access rules as profile preview. The fetcher accepts public HTTPS pages, validates each redirect, limits response size and time, and does not forward dashboard cookies or tokens. It refuses private or local network destinations. Preview and approval endpoints are unchanged.
+
 ## Example
 
 This is **synthetic test content**, not a recommendation for a particular coffee or a claim about a product page:

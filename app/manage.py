@@ -9,7 +9,7 @@ import sqlite3
 import zipfile
 from contextlib import closing
 
-from .security import configure_auth, load_auth
+from .security import auth_mode, configure_auth, has_password, load_auth
 from .storage import Store
 
 
@@ -77,10 +77,15 @@ def main():
         else:
             store = Store(args.data_dir)
             if args.command == "check":
-                print("Account configured" if load_auth(store.root) else "Account setup required")
+                if auth_mode() == "trusted_lan":
+                    print("Dashboard access: trusted LAN (no username or password)")
+                else:
+                    print("Account configured" if has_password(load_auth(store.root)) else "Account setup required")
                 print(f"Database: {store.path}")
             else:
-                if load_auth(store.root):
+                if auth_mode() == "trusted_lan":
+                    raise ValueError("Trusted LAN access needs no account setup. Use XBLOOM_AUTH_MODE=password to enable sign-in.")
+                if has_password(load_auth(store.root)):
                     raise ValueError("An account already exists. Setup cannot overwrite existing credentials.")
                 username = input("Username [admin]: ").strip() or "admin"
                 password = getpass.getpass("Password (at least 12 characters): ")
