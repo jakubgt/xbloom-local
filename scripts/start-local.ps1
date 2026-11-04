@@ -33,7 +33,7 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 }
 
 if ($Install) {
-    & $venvPython -m pip install -r $requirementsPath
+    & $venvPython -m pip install --require-hashes --only-binary=:all: -r $requirementsPath
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 }
 

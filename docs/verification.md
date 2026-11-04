@@ -6,10 +6,13 @@ This record separates automated checks, browser exercises, and limited physical-
 
 | Date | Environment | Result |
 | --- | --- | --- |
+| November 3, 2026 | Fresh hash-locked Windows environments, Python 3.12.10 and 3.13.3 | **289 passed** on each version (28.07 and 28.71 seconds). One existing Starlette/httpx deprecation warning per run. |
 | November 3, 2026 | Windows, Python 3.12 | Full suite: **289 passed** in 30.30 seconds. One existing Starlette/httpx deprecation warning. |
 | November 2, 2026 | Debian, Python 3.13.5 | Full suite: **289 passed**. |
 
 The latest Windows run used a fresh temporary test directory. Tests use temporary application storage, synthetic card data, and mocked device calls; they do not open a reader or perform physical card operations.
+
+Release dependency checks verified both runtime and development locks for Windows/Linux x64 with Python 3.11, 3.12, and 3.13: all 12 target wheel installations passed hash validation. Foreign-target wheel checks establish package availability and integrity, not execution on that operating system. A strict audit of all 55 unique packages across platform markers reported no known vulnerabilities at the time of the audit. Lock regeneration checks passed on Python 3.12 and 3.13. GitHub CI separately runs the full suite on each of the six supported OS/Python combinations.
 
 Coverage includes authentication and trusted-LAN access, token scopes, public-HTTPS import restrictions and provenance, recipe history, saved brewing preferences, backup/restore, NFC encoding, v4/v5 dump parsing, locked and protected regions, approval expiry, mode separation, interrupted operations, recovery, and initialization contracts. Initialization checks include exact preview approval, native backup provenance, retention of originals, identity adoption only after full observable readback, and refusal to replay uncertain operations.
 
@@ -44,8 +47,12 @@ These results apply only to the tested cards, client/firmware combination, and o
 
 **Separately enabled factory Gen2 initialization** is the explicit exception: it adopts a template UID/header and changes two hidden chip settings. Ordinary memory backups cannot capture or recover those settings, and ordinary readback cannot verify their final values. A successful initialization result establishes only the expected observable UID, memory, readable locks, and metadata. A failed, interrupted, or uncertain attempt requires manual identity reconciliation; there is no automatic retry or rollback, and a recipe restore cannot undo initialization.
 
-## Remaining acceptance work
+## User-reported brew
 
-**Offline brewer recognition and a supervised brew have not been verified.** Card readback does not establish how xBloom firmware interprets every field or whether a complete V60/adapter/Melodrip setup behaves as intended. The software does not validate taste or automate manual accessory placement.
+On November 3, 2026, the user reported a successful brew with the V60 moving-adapter setup. This is a user-reported result for that setup, not an independently observed or instrumented brew test. The report does not establish that every recipe field, automatic-grinding step, diffuser placement, or firmware behavior was separately measured and verified.
+
+## Remaining acceptance limits
+
+Card readback and the reported successful brew do not establish behavior across other cards, readers, recipes, accessories, or firmware versions. Actual v5 physical reads remain untested. The hidden initialization settings remain unverifiable by ordinary readback. The software does not validate taste or automate manual accessory placement.
 
 Follow the [physical-card acceptance checklist](deployment.md#first-physical-card-acceptance-checklist) for each new hardware setup and review the [initialization limits](deployment.md#separately-approved-blank-card-initialization) before enabling that separate workflow. Every future physical operation still requires its own current backup and explicit approval.
