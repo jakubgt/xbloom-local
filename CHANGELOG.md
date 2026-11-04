@@ -17,6 +17,7 @@ First versioned release of xBloom Local, a self-hosted recipe library and NFC-ca
 - Password or trusted-LAN access, scoped bridge/API tokens, LAN/host/same-origin checks, and Debian LXC + Caddy HTTPS deployment documentation.
 - Full application backup/export and validated restore into an empty directory, preserving private recovery material and cancelling stale jobs.
 - A shared **1.0.0** app/bridge version, separate runtime and development dependency locks, and a [private vulnerability reporting policy](SECURITY.md).
+- Sanitized validation, product-lookup, and unexpected NFC-preview errors retain useful guidance without returning internal exception details or submitted-value representations. Failed previews never produce a write payload.
 
 ### Verification and limits
 

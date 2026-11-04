@@ -1,5 +1,6 @@
 import copy
 import unittest
+from unittest.mock import patch
 
 from app.nfc import (NFCError, crc8_maxim, decode_recipe, make_dump, parse_dump,
                      preview_recipe)
@@ -108,6 +109,37 @@ class NFCCodecTests(unittest.TestCase):
         parsed = parse_dump(make_dump("E011223344556677", bytes(memory)))
         self.assertFalse(parsed["decoded"]["checksum_valid"])
         self.assertFalse(preview_recipe(recipe(), bytes(memory))["compatible"])
+
+    def test_internal_encoding_errors_are_private_and_never_produce_write_payloads(self):
+        for error in (TypeError, KeyError, OverflowError):
+            with self.subTest(error=error.__name__), patch(
+                    "app.nfc.decode_recipe", side_effect=error("synthetic-internal-detail")):
+                result = preview_recipe(recipe(), self.memory)
+            self.assertFalse(result["compatible"])
+            self.assertEqual(result["errors"], ["Recipe could not be encoded. Check its fields and try again."])
+            self.assertEqual(result["write_blocks"], [])
+            for field in ("recipe_hex", "memory_hex", "checksum"):
+                self.assertIsNone(result[field])
+
+    def test_expected_encoding_validation_keeps_actionable_guidance(self):
+        value = recipe()
+        value["dose_g"] = 18.5
+        result = preview_recipe(value, self.memory)
+        self.assertFalse(result["compatible"])
+        self.assertEqual(result["errors"], ["NFC dose requires whole grams; choose an integer dose explicitly."])
+        self.assertEqual(result["write_blocks"], [])
+
+    def test_preview_uses_public_nfc_guidance_not_exception_diagnostics(self):
+        class DiagnosticNFCError(NFCError):
+            def __str__(self):
+                return "synthetic-internal-diagnostics"
+
+        with patch("app.nfc.decode_recipe", side_effect=DiagnosticNFCError("Read the card again.")):
+            result = preview_recipe(recipe(), self.memory)
+        self.assertFalse(result["compatible"])
+        self.assertEqual(result["errors"], ["Read the card again."])
+        self.assertEqual(result["write_blocks"], [])
+        self.assertIsNone(result["memory_hex"])
 
     def test_shorter_recipe_clears_old_payload_only(self):
         value = recipe()

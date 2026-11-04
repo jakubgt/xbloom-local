@@ -17,6 +17,7 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Respon
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
@@ -88,6 +89,13 @@ def create_app(data_dir=None):
     async def validation_error(request, exc):
         messages = [f"{'.'.join(str(x) for x in e['loc'][1:])}: {e['msg']}" for e in exc.errors()]
         return JSONResponse({"detail": "; ".join(messages)}, status_code=422)
+
+    def model_validation_error(exc: ValidationError):
+        # Match request-body validation without exposing input values, model
+        # representations, exception context, or Pydantic documentation URLs.
+        errors = [{"loc": ("body", *error["loc"]), "msg": error["msg"], "type": error["type"]}
+                  for error in exc.errors(include_input=False, include_context=False, include_url=False)]
+        return RequestValidationError(errors)
 
     def record(kind, ident):
         value = store.get(kind, ident)
@@ -264,8 +272,8 @@ def create_app(data_dir=None):
             old = record("beans", ident)
             try:
                 checked = Bean.model_validate({**{k: v for k, v in old.items() if k in Bean.model_fields}, **payload}).model_dump()
-            except ValueError as exc:
-                raise HTTPException(422, str(exc))
+            except ValidationError as exc:
+                raise model_validation_error(exc) from None
             result = store.put("beans", {**old, **checked, "updated_at": now()})
         return result
 
@@ -339,8 +347,8 @@ def create_app(data_dir=None):
             old = record("recipes", ident)
             try:
                 checked = Recipe.model_validate({**{k: v for k, v in old.items() if k in Recipe.model_fields}, **payload}).model_dump()
-            except ValueError as exc:
-                raise HTTPException(422, str(exc))
+            except ValidationError as exc:
+                raise model_validation_error(exc) from None
             validate_recipe_bean(checked)
             stamp = now()
             result = {**old, **checked, "version": old["version"] + 1, "updated_at": stamp}
@@ -365,8 +373,8 @@ def create_app(data_dir=None):
     def profile_payload(payload):
         try:
             profile = Profile.model_validate(payload.get("profile", payload)).model_dump()
-        except ValueError as exc:
-            raise HTTPException(422, str(exc))
+        except ValidationError as exc:
+            raise model_validation_error(exc) from None
         warnings = []
         if not profile["bean"].get("product_url"):
             warnings.append("No product URL supplied. Source details remain unverified.")
@@ -385,7 +393,7 @@ def create_app(data_dir=None):
                 result.setdefault("warnings", []).append("Using your V60 01 + Melodrip defaults: automatic grinding with your moving V60 adapter, then manual Melodrip placement after the bloom.")
             return result
         except ProductLookupError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise HTTPException(exc.status_code, exc.public_message) from exc
 
     @app.post("/api/import/preview", dependencies=[Depends(user)])
     def import_preview(payload: dict = Body(...)):
@@ -428,8 +436,8 @@ def create_app(data_dir=None):
                 raise HTTPException(409, "Finish or cancel the active card job first")
             try:
                 checked = Card.model_validate({**{k: v for k, v in card.items() if k in Card.model_fields}, **payload}).model_dump()
-            except ValueError as exc:
-                raise HTTPException(422, str(exc))
+            except ValidationError as exc:
+                raise model_validation_error(exc) from None
             if any(c["id"] != ident and c["label"].casefold() == checked["label"].casefold() for c in store.all("cards")):
                 raise HTTPException(409, "Card labels must be unique")
             if checked["uid"] != card.get("uid") and any(b["card_id"] == ident for b in store.all("backups")):

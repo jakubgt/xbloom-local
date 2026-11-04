@@ -6,6 +6,7 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
+import app.nfc as nfc
 from app.main import create_app
 from app.manage import restore
 from app.nfc import make_dump, parse_dump, preview_recipe
@@ -91,6 +92,58 @@ def test_recipe_history_and_water_validation(client):
     assert [v["version"] for v in versions] == [2, 1]
     assert versions[1]["recipe"]["grind_setting"] == 60
     assert client.post("/api/recipes", json=recipe(total_water_ml=300)).status_code == 422
+
+
+@pytest.mark.parametrize("kind,initial,changes,field", [
+    ("beans", {"name": "Synthetic bean"}, {"rating": "SYNTHETIC_PRIVATE_VALUE"}, "rating"),
+    ("recipes", recipe(), {"grind_setting": "SYNTHETIC_PRIVATE_VALUE"}, "grind_setting"),
+    ("cards", {"label": "Synthetic card"}, {"uid": "SYNTHETIC_PRIVATE_VALUE"}, "uid"),
+])
+def test_manual_validation_reports_fields_without_echoing_input(client, kind, initial, changes, field):
+    saved = client.post(f"/api/{kind}", json=initial).json()
+    before = client.app.state.store.get(kind, saved["id"])
+    response = client.patch(f"/api/{kind}/{saved['id']}", json=changes)
+    assert response.status_code == 422
+    assert field + ":" in response.json()["detail"]
+    assert "SYNTHETIC_PRIVATE_VALUE" not in response.text
+    assert all(text not in response.text for text in ("input_value", "input_type", "errors.pydantic.dev"))
+    assert client.app.state.store.get(kind, saved["id"]) == before
+    if kind == "recipes":
+        assert len(client.get(f"/api/recipes/{saved['id']}/versions").json()["items"]) == 1
+
+
+@pytest.mark.parametrize("endpoint", ["preview", "approve"])
+def test_invalid_import_has_safe_validation_and_never_persists(client, endpoint):
+    profile = {"schema_version": 1, "bean": {"name": "SYNTHETIC_PRIVATE_VALUE"},
+               "recipe": recipe(total_water_ml=300)}
+    response = client.post(f"/api/import/{endpoint}", json={"profile": profile, "approved": True})
+    assert response.status_code == 422
+    assert "recipe: Value error, Pour volumes must add up to total water" in response.json()["detail"]
+    assert all(text not in response.text for text in ("SYNTHETIC_PRIVATE_VALUE", "input_value", "input_type", "errors.pydantic.dev"))
+    assert client.get("/api/beans").json()["items"] == []
+    assert client.get("/api/recipes").json()["items"] == []
+    assert client.app.state.store.all("versions") == []
+
+
+@pytest.mark.parametrize("endpoint", ["/api/recipes/preview", "/api/import/preview"])
+def test_preview_hides_unexpected_codec_exception(client, monkeypatch, endpoint):
+    def fail_round(value):
+        raise TypeError("SYNTHETIC_INTERNAL_EXCEPTION /private/example.py")
+    monkeypatch.setattr(nfc, "_round", fail_round)
+    payload = recipe()
+    if endpoint == "/api/import/preview":
+        payload = {"profile": {"schema_version": 1, "bean": {"name": "Synthetic"}, "recipe": payload}}
+    response = client.post(endpoint, json=payload)
+    assert response.status_code == 200
+    assert "SYNTHETIC_INTERNAL_EXCEPTION" not in response.text
+    assert "/private/example.py" not in response.text
+    result = response.json()
+    preview = result["encoding"] if endpoint == "/api/import/preview" else result
+    assert preview["compatible"] is False and preview["errors"]
+    assert preview["recipe_hex"] is None and preview["memory_hex"] is None
+    assert preview["checksum"] is None and preview["write_blocks"] == []
+    assert client.get("/api/beans").json()["items"] == []
+    assert client.get("/api/recipes").json()["items"] == []
 
 
 def test_import_review_required_and_unknowns_preserved(client):
