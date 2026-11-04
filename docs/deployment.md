@@ -19,15 +19,17 @@ useradd --system --home-dir /var/lib/xbloom-local --shell /usr/sbin/nologin xblo
 install -d -o xbloom -g xbloom -m 0700 /var/lib/xbloom-local
 ```
 
-Clone the source repository to `/opt/xbloom-local`, or copy a reviewed source checkout there. Keep `data/`, `.venv/`, credentials, and local card dumps out of that source transfer. Public source availability does not expose your running application; keep the deployment restricted to your LAN.
+Use a reviewed release tag for deployment. The example below installs `v1.0.0` into `/opt/xbloom-local`; a reviewed source archive for that tag is an alternative. Keep `data/`, `.venv/`, credentials, and local card dumps out of the source transfer. Public source availability does not expose your running application; keep the deployment restricted to your LAN.
 
 ```sh
-git clone https://github.com/jakubgt/xbloom-local.git /opt/xbloom-local
+git clone --branch v1.0.0 --depth 1 https://github.com/jakubgt/xbloom-local.git /opt/xbloom-local
 cd /opt/xbloom-local
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.txt
 install -m 0600 deploy/xbloom-local.env.example /etc/xbloom-local.env
 ```
+
+`requirements.txt` is the runtime dependency lock. `requirements-dev.txt` adds the test and maintenance tools and is intended for a development/test environment. Installing dependencies requires access to their package source; ordinary local library use does not.
 
 Edit `/etc/xbloom-local.env`: set `XBLOOM_ALLOWED_HOSTS` to the LXC's actual reserved IP and any LAN hostname you will use. Keep `XBLOOM_SECURE_COOKIES=true` and `XBLOOM_LAN_ONLY=true`. Runtime configuration is read from process environment; the server does not automatically load a project `.env` file.
 
@@ -180,7 +182,7 @@ Bluetooth remains unused.
 
 ## First physical-card acceptance checklist
 
-This checklist is an acceptance test to perform later with your hardware. It is **not completed by installation, simulation, or automated tests**. Each actual write requires your explicit approval of that specific card and recipe.
+Use this checklist for your own hardware. It is **not completed by installation, simulation, or automated tests**. A successful V60 moving-adapter brew has been [reported by one user](verification.md#user-reported-brew); it was not independently observed or measured and does not qualify another setup. Each actual write requires your explicit approval of that specific card and recipe.
 
 1. **Label the card.** Register your already-working custom card in Cards with a unique physical label. Put only that labeled card on the Proxmark antenna. A shared UID is not enough to identify it.
 2. **Save the baseline.** Start the bridge with `-Hardware` and no `-AllowWrites`. Use **Read & back up**, confirm the UID and full-memory backup are recorded as a hardware read, and download that original backup to separate storage. A community dump or simulated read does not satisfy this step.
@@ -218,4 +220,13 @@ The restore command validates archive paths and checksums and refuses a nonempty
 
 ## Updating
 
-Export a backup, stop the bridge, stop `xbloom`, update the reviewed source and dependencies, run tests, and restart the service. Keep the data directory persistent across upgrades. Do not run migrations or delete data simply because a checkout has changed. Review release notes and the backup restore procedure before an update.
+Read the [release notes](../CHANGELOG.md) and export a full application backup before upgrading. Store it privately outside the source checkout and retain the bridge's original backups and pre-write snapshots. A release archive contains source and documentation, not your library or recovery data.
+
+1. Stop the bridge and application. Keep the existing source, virtual environment, and configuration as a separately named recovery copy; preserve the persistent data directory.
+2. Install the reviewed release source, using the same version for the app and Windows bridge. Install runtime dependencies into a fresh virtual environment with `python -m pip install --require-hashes --only-binary=:all: -r requirements.txt`.
+3. In a separate test environment, install `requirements-dev.txt` with the same pip options and run `python -m pytest -q`. Do not point a test server or test environment at your live data directory.
+4. Restart the application and check its reported version, configured access mode, bean/recipe history, preferences, photos, and a known card backup. Reconnect the Windows bridge and begin hardware access read-only.
+
+Version 1.0.0 does not require a library reset, card reinitialization, or reader firmware update. Do not delete data or change physical cards merely because a checkout has changed. If validation fails, stop and return to the preserved source/environment, following the [recovery procedure](#recovery) if data restoration is necessary. Keep the failed/current data separately until recovery has been verified.
+
+Report suspected security issues through the [private reporting channel](../SECURITY.md#report-a-vulnerability-privately), without attaching real credentials or card dumps to public issues.

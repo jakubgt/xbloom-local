@@ -6,6 +6,8 @@
 
 **Your coffees, recipes, and NFC cards. In one local workspace.**
 
+**Version 1.0.0** · [MIT license](LICENSE) · [Release notes](CHANGELOG.md) · [Security policy](SECURITY.md)
+
 A self-hosted recipe library and card manager for **xBloom Studio**, with a responsive dashboard, a FastAPI/SQLite backend, and a separate Windows Proxmark bridge. Keep coffee facts, brewing experiments, recipe history, and card backups together on your own computer or LAN.
 
 The source is public; your running app and library stay local. Brewing uses custom NFC cards. The app does not control the brewer over Bluetooth or require an xBloom cloud account. An optional product-link lookup fetches public coffee pages when you request it.
@@ -39,9 +41,11 @@ The V60 preference starts at **18 g, 1:16, 288 ml, grind 56, and 80 RPM**, with 
 
 The bloom runs without the Melodrip; placement after the bloom is manual. Keep it clear of the moving adapter and spout. The card uses fixed pauses and cannot sense the water level. These are adjustable starting recommendations, not a validated Hario, Melodrip, or roaster recipe. Changing the preference affects future defaults, not saved recipe versions.
 
+A successful V60 moving-adapter brew has been reported by the user. This is user-reported acceptance of that setup, not an independently observed or measured validation of every recipe setting or accessory. See the [verification record](docs/verification.md#user-reported-brew) for its scope.
+
 ## Start on Windows
 
-You need **Python 3.11 or newer**. Clone or download this repository, then double-click **Start xBloom.cmd**. It prepares a local Python environment, installs dependencies on first launch, starts the app, and opens the browser. Keep its window open; press **Ctrl+C** there to stop the server.
+You need **Python 3.11 or newer**. Download the source for the desired [release](https://github.com/jakubgt/xbloom-local/releases), or clone the repository and select that release tag, then double-click **Start xBloom.cmd**. It prepares a local Python environment, installs dependencies on first launch, starts the app, and opens the browser. Keep its window open; press **Ctrl+C** there to stop the server. Existing users should follow the [upgrade steps](CHANGELOG.md#upgrading-from-an-earlier-checkout) after making a private backup.
 
 Or run from the project folder:
 
@@ -120,17 +124,23 @@ Restore with `python -m app.manage restore /path/to/backup.zip` only after stopp
 
 ## Development and verification
 
-The app uses Python, FastAPI, Pydantic, SQLite, and plain JavaScript/CSS. Install the dependencies from `requirements.txt`, then run the synthetic suite:
+The app uses Python, FastAPI, Pydantic, SQLite, and plain JavaScript/CSS. `requirements.txt` contains the runtime dependency lock. For development and tests, create a virtual environment and install `requirements-dev.txt`, which also includes the runtime dependencies:
 
 ```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
 On Linux:
 
 ```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
+
+For runtime-only installation, use the same pip options with `-r requirements.txt`. To change dependencies, edit `requirements.in` or `requirements-dev.in`, then run `python scripts/lock-dependencies.py` in the development environment and review both generated locks. `python scripts/lock-dependencies.py --check` checks lock freshness without changing the locks; it may contact public PyPI and update the ignored resolver cache. Commit reviewed inputs and locks together; do not edit hashes by hand.
 
 Tests cover authentication, scoped tokens, import validation and provenance, recipe history, brewing preferences, backup/restore, NFC formats, protected regions, bridge operations, initialization guards, and interruption recovery. Test fixtures use temporary storage, synthetic cards, and mocked device calls. Keep personal dumps out of fixtures and commits.
 
@@ -142,7 +152,9 @@ See the [verification record](docs/verification.md) for recorded checks and thei
 - [Product-link and JSON profile import](docs/import-schema.md)
 - [NFC format, supported operations, and initialization limits](docs/nfc-format.md)
 - [Verification record](docs/verification.md)
+- [1.0.0 release notes and upgrade steps](CHANGELOG.md)
+- [Security policy and private vulnerability reporting](SECURITY.md)
 - [Third-party references and notices](THIRD_PARTY_NOTICES.md)
 - [Heimdall icon](assets/heimdall/xbloom-local.png) and [generation notes](assets/heimdall/prompt.txt)
 
-The project references community work including XBRecipeWriterPlus, xbloom-agent, xbloom-ble, and Proxmark3. Attribution and the recorded license evidence are kept in the notices. No repository-wide software license is currently included; upstream license declarations do not define this project's license.
+The project's original code, documentation, and project assets are distributed under the [MIT license](LICENSE), copyright (c) 2026 jakubgt. The project references community work including XBRecipeWriterPlus, xbloom-agent, xbloom-ble, and Proxmark3. Their attribution and recorded license evidence remain in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); the project license does not replace upstream terms.

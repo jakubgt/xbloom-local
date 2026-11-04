@@ -2,9 +2,9 @@
 
 The reference review below was recorded on 2026-11-01 against the listed commits. This is a public source repository for an application deployed on the user's own computer or LAN. Publishing the source does not publish a running service or its data. No upstream application source files, upstream artwork, personal card dumps, or Proxmark binaries are vendored in this checkout. The NFC codec and bridge were implemented using protocol information in the references below. This notice records provenance; it does not grant rights to upstream material or replace its terms.
 
-## Repository license status
+## Project license
 
-No repository-wide software license is currently included. The license evidence below concerns the referenced projects; it is not a license declaration for xBloom Local. Public source availability is not described here as an open-source license grant.
+The original xBloom Local code, documentation, and project assets are distributed under the [MIT license](LICENSE), copyright (c) 2026 jakubgt. This grant covers the project's own material; it does not relicense the referenced projects, their code or assets, or separately installed dependencies. Keep their attribution and applicable notices with any material you redistribute. The recorded upstream license evidence below is unchanged by this project's MIT release.
 
 ## Project images
 

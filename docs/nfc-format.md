@@ -222,5 +222,7 @@ Interrupted initialization instead retains the manual identity reconciliation
 restriction. Original backups remain available.
 Limited physical reads, ordinary recipe writes, and separately approved factory
 initialization are recorded in [verification.md](verification.md), including the
-unverifiable hidden-setting limits. The end-to-end offline brew test remains
-outstanding; each future physical operation still requires new approval.
+unverifiable hidden-setting limits. A successful V60 moving-adapter brew is
+[user-reported](verification.md#user-reported-brew), not independently observed
+or measured. It does not qualify other cards, recipes, or firmware combinations;
+each future physical operation still requires new approval.

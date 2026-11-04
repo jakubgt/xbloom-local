@@ -1,0 +1,7 @@
+# Development includes exactly the same runtime dependency versions.
+-c requirements.txt
+-r requirements.in
+httpx==0.28.1
+pytest==9.2.0
+pip-audit==2.10.1
+uv==0.13.7

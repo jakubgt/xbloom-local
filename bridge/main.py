@@ -25,13 +25,13 @@ from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from uuid import uuid4
 
+from app import __version__ as VERSION
 from app.nfc import (NFCError, crc8_maxim, decode_recipe, make_dump, memory_sha256,
                      normalize_uid, parse_dump)
 from app.initialization import (CAPABILITY as INITIALIZATION_CAPABILITY, CHIP_PROFILE,
                                 initialization_snapshot, validate_initialization_job,
                                 validate_initialization_readback)
 
-VERSION = "0.1.0"
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
